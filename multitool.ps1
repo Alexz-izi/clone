@@ -1,5 +1,5 @@
 # =====================================================
-# Multi-Tool GUI - Modern Dark Theme
+# Multi-Tool GUI - Modern Dark Theme + Animations
 # Launched by multitool.bat
 # =====================================================
 
@@ -10,21 +10,24 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 
 # ---------- Theme palette ----------
 $theme = @{
-    Bg          = [System.Drawing.Color]::FromArgb(18, 18, 22)     # main background
-    Sidebar     = [System.Drawing.Color]::FromArgb(24, 24, 30)     # left rail
-    Panel       = [System.Drawing.Color]::FromArgb(28, 28, 34)     # content panel
-    PanelDeep   = [System.Drawing.Color]::FromArgb(14, 14, 18)     # output / inset
+    Bg          = [System.Drawing.Color]::FromArgb(18, 18, 22)
+    Sidebar     = [System.Drawing.Color]::FromArgb(24, 24, 30)
+    Panel       = [System.Drawing.Color]::FromArgb(28, 28, 34)
+    PanelDeep   = [System.Drawing.Color]::FromArgb(14, 14, 18)
     Border      = [System.Drawing.Color]::FromArgb(40, 40, 48)
-    BtnIdle     = [System.Drawing.Color]::FromArgb(32, 32, 40)
+    BtnIdle     = [System.Drawing.Color]::FromArgb(24, 24, 30)
     BtnHover    = [System.Drawing.Color]::FromArgb(45, 45, 56)
     BtnActive   = [System.Drawing.Color]::FromArgb(60, 60, 75)
-    Accent      = [System.Drawing.Color]::FromArgb(110, 168, 254)  # soft blue
+    Accent      = [System.Drawing.Color]::FromArgb(110, 168, 254)
     AccentHover = [System.Drawing.Color]::FromArgb(140, 188, 255)
     Text        = [System.Drawing.Color]::FromArgb(230, 230, 235)
     TextDim     = [System.Drawing.Color]::FromArgb(150, 150, 160)
     Ok          = [System.Drawing.Color]::FromArgb(120, 220, 150)
     Warn        = [System.Drawing.Color]::FromArgb(240, 200, 110)
     Err         = [System.Drawing.Color]::FromArgb(240, 120, 120)
+    ScrollTrack = [System.Drawing.Color]::FromArgb(20, 20, 26)
+    ScrollThumb = [System.Drawing.Color]::FromArgb(60, 60, 72)
+    ScrollHover = [System.Drawing.Color]::FromArgb(95, 95, 110)
 }
 
 $fontUI    = New-Object System.Drawing.Font("Segoe UI", 9.5)
@@ -33,7 +36,17 @@ $fontSmall = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $fontMono  = New-Object System.Drawing.Font("Cascadia Mono", 9.5)
 if (-not $fontMono) { $fontMono = New-Object System.Drawing.Font("Consolas", 9.5) }
 
-# ---------- Main window (borderless, draggable) ----------
+# ---------- Color helpers ----------
+function Lerp-Color([System.Drawing.Color]$a, [System.Drawing.Color]$b, [double]$t) {
+    if ($t -lt 0) { $t = 0 }
+    if ($t -gt 1) { $t = 1 }
+    $r = [int]($a.R + ($b.R - $a.R) * $t)
+    $g = [int]($a.G + ($b.G - $a.G) * $t)
+    $bl = [int]($a.B + ($b.B - $a.B) * $t)
+    return [System.Drawing.Color]::FromArgb($r, $g, $bl)
+}
+
+# ---------- Main window (borderless) ----------
 $form               = New-Object System.Windows.Forms.Form
 $form.Text          = "Multi-Tool"
 $form.Size          = New-Object System.Drawing.Size(960, 600)
@@ -44,8 +57,9 @@ $form.ForeColor     = $theme.Text
 $form.Font          = $fontUI
 $form.FormBorderStyle = "None"
 $form.DoubleBuffered  = $true
+$form.Opacity         = 0.0   # fade in on launch
 
-# ----- Custom title bar (drag + min/close) -----
+# ---------- Title bar ----------
 $titleBar           = New-Object System.Windows.Forms.Panel
 $titleBar.Dock      = "Top"
 $titleBar.Height    = 38
@@ -61,7 +75,7 @@ $appTitle.Width     = 220
 $appTitle.TextAlign = "MiddleLeft"
 $titleBar.Controls.Add($appTitle)
 
-# Drag-to-move on the title bar
+# Drag-to-move
 $drag = @{ active = $false; offset = $null }
 $titleBar.Add_MouseDown({
     if ($_.Button -eq "Left") {
@@ -77,8 +91,8 @@ $titleBar.Add_MouseMove({
 })
 $titleBar.Add_MouseUp({ $drag.active = $false })
 
-# Window control buttons
-function New-WinBtn($text, $hoverColor) {
+# ----- Window control buttons (animated) -----
+function New-WinBtn([string]$text, [System.Drawing.Color]$hoverColor) {
     $b           = New-Object System.Windows.Forms.Button
     $b.Text      = $text
     $b.Width     = 46
@@ -91,8 +105,35 @@ function New-WinBtn($text, $hoverColor) {
     $b.FlatAppearance.BorderSize = 0
     $b.TabStop   = $false
     $b.Cursor    = "Hand"
-    $b.Add_MouseEnter({ $this.BackColor = $hoverColor; $this.ForeColor = $theme.Text }.GetNewClosure())
-    $b.Add_MouseLeave({ $this.BackColor = $theme.Sidebar; $this.ForeColor = $theme.TextDim }.GetNewClosure())
+
+    # Animation state stored in Tag
+    $b.Tag = @{
+        target  = 0.0   # 0 idle, 1 hover
+        current = 0.0
+        from    = $theme.Sidebar
+        to      = $hoverColor
+        timer   = $null
+    }
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 16
+    $btnRef = $b
+    $timer.Add_Tick({
+        $s = $btnRef.Tag
+        $diff = $s.target - $s.current
+        if ([Math]::Abs($diff) -lt 0.02) {
+            $s.current = $s.target
+            $timer.Stop()
+        } else {
+            $s.current += $diff * 0.25  # easing
+        }
+        $btnRef.BackColor = Lerp-Color $s.from $s.to $s.current
+        $btnRef.ForeColor = Lerp-Color $theme.TextDim $theme.Text $s.current
+    }.GetNewClosure())
+    $b.Tag.timer = $timer
+
+    $b.Add_MouseEnter({ $this.Tag.target = 1.0; $this.Tag.timer.Start() }.GetNewClosure())
+    $b.Add_MouseLeave({ $this.Tag.target = 0.0; $this.Tag.timer.Start() }.GetNewClosure())
     return $b
 }
 
@@ -110,17 +151,23 @@ $sidebar           = New-Object System.Windows.Forms.Panel
 $sidebar.Dock      = "Left"
 $sidebar.Width     = 240
 $sidebar.BackColor = $theme.Sidebar
-$sidebar.AutoScroll = $true
+$sidebar.AutoScroll = $false  # we'll wrap our own
 $form.Controls.Add($sidebar)
 
-# Brand block in sidebar
+# Inner scroll container for sidebar (we'll add custom scrollbar later)
+$sidebarInner            = New-Object System.Windows.Forms.Panel
+$sidebarInner.Dock       = "Fill"
+$sidebarInner.BackColor  = $theme.Sidebar
+$sidebarInner.AutoScroll = $true
+$sidebar.Controls.Add($sidebarInner)
+
 $brand           = New-Object System.Windows.Forms.Label
 $brand.Text      = "MULTI-TOOL"
 $brand.ForeColor = $theme.Accent
 $brand.Font      = New-Object System.Drawing.Font("Segoe UI Semibold", 13)
 $brand.Location  = New-Object System.Drawing.Point(20, 18)
 $brand.AutoSize  = $true
-$sidebar.Controls.Add($brand)
+$sidebarInner.Controls.Add($brand)
 
 $brandSub           = New-Object System.Windows.Forms.Label
 $brandSub.Text      = "Windows utilities"
@@ -128,18 +175,17 @@ $brandSub.ForeColor = $theme.TextDim
 $brandSub.Font      = $fontSmall
 $brandSub.Location  = New-Object System.Drawing.Point(21, 44)
 $brandSub.AutoSize  = $true
-$sidebar.Controls.Add($brandSub)
+$sidebarInner.Controls.Add($brandSub)
 
-# Section header helper
 $script:sidebarY = 80
-function Add-Section($label) {
+function Add-Section([string]$label) {
     $l           = New-Object System.Windows.Forms.Label
     $l.Text      = $label.ToUpper()
     $l.ForeColor = $theme.TextDim
     $l.Font      = New-Object System.Drawing.Font("Segoe UI Semibold", 8)
     $l.Location  = New-Object System.Drawing.Point(20, $script:sidebarY)
     $l.AutoSize  = $true
-    $sidebar.Controls.Add($l)
+    $sidebarInner.Controls.Add($l)
     $script:sidebarY += 22
 }
 
@@ -151,7 +197,6 @@ $content.Padding   = New-Object System.Windows.Forms.Padding(20, 14, 20, 14)
 $form.Controls.Add($content)
 $content.BringToFront()
 
-# Header row inside content
 $header           = New-Object System.Windows.Forms.Panel
 $header.Dock      = "Top"
 $header.Height    = 60
@@ -174,17 +219,25 @@ $pageHint.Location  = New-Object System.Drawing.Point(2, 36)
 $pageHint.AutoSize  = $true
 $header.Controls.Add($pageHint)
 
-# Output card
+# ---------- Output card (with custom scrollbar) ----------
 $card             = New-Object System.Windows.Forms.Panel
 $card.Dock        = "Fill"
 $card.BackColor   = $theme.Panel
-$card.Padding     = New-Object System.Windows.Forms.Padding(1)
+$card.Padding     = New-Object System.Windows.Forms.Padding(0)
 $content.Controls.Add($card)
 $card.BringToFront()
 
-$output                = New-Object System.Windows.Forms.TextBox
+# Scrollbar lives on the right inside $card
+$vScroll             = New-Object System.Windows.Forms.Panel
+$vScroll.Dock        = "Right"
+$vScroll.Width       = 10
+$vScroll.BackColor   = $theme.ScrollTrack
+$card.Controls.Add($vScroll)
+
+# Output uses default vertical scroll under the hood, hidden behind the custom one
+$output                = New-Object System.Windows.Forms.RichTextBox
 $output.Multiline      = $true
-$output.ScrollBars     = "Both"
+$output.ScrollBars     = "Vertical"
 $output.WordWrap       = $false
 $output.ReadOnly       = $true
 $output.BorderStyle    = "None"
@@ -194,8 +247,120 @@ $output.Font           = $fontMono
 $output.Dock           = "Fill"
 $output.Text           = "Ready. Click any tool on the left to begin."
 $card.Controls.Add($output)
+$output.BringToFront()
 
-# Status strip
+# Push real text away from the custom scrollbar visually
+$output.Padding = New-Object System.Windows.Forms.Padding(8, 8, 16, 8)
+
+# Custom thumb (drawn as a thin rounded rectangle)
+$thumb = @{
+    Size      = 40
+    Pos       = 0
+    Hover     = $false
+    Dragging  = $false
+    DragStartY= 0
+    DragStartPos = 0
+}
+
+function Update-ScrollThumb {
+    # Approximate: use line count as proxy for content height
+    $totalLines  = [Math]::Max(1, ($output.Lines.Count))
+    $visibleLines = [Math]::Max(1, [int]($output.ClientSize.Height / $output.Font.Height))
+    if ($totalLines -le $visibleLines) {
+        $vScroll.Visible = $false
+        return
+    }
+    $vScroll.Visible = $true
+
+    $trackH = $vScroll.ClientSize.Height
+    $thumbH = [Math]::Max(24, [int]($trackH * ($visibleLines / $totalLines)))
+    $thumb.Size = $thumbH
+
+    # First visible line
+    $firstChar  = $output.GetCharIndexFromPosition((New-Object System.Drawing.Point(2, 2)))
+    $firstLine  = $output.GetLineFromCharIndex($firstChar)
+    $maxFirst   = [Math]::Max(1, $totalLines - $visibleLines)
+    $ratio      = [Math]::Min(1.0, $firstLine / $maxFirst)
+    $thumb.Pos  = [int](($trackH - $thumbH) * $ratio)
+    $vScroll.Invalidate()
+}
+
+$vScroll.Add_Paint({
+    $g = $_.Graphics
+    $g.SmoothingMode = "AntiAlias"
+    $color = if ($thumb.Hover -or $thumb.Dragging) { $theme.ScrollHover } else { $theme.ScrollThumb }
+    $brush = New-Object System.Drawing.SolidBrush($color)
+    $rect  = New-Object System.Drawing.Rectangle(2, $thumb.Pos, $vScroll.Width - 4, $thumb.Size)
+    # Rounded thumb
+    $path  = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $r     = 4
+    $path.AddArc($rect.X, $rect.Y, $r*2, $r*2, 180, 90)
+    $path.AddArc($rect.Right - $r*2, $rect.Y, $r*2, $r*2, 270, 90)
+    $path.AddArc($rect.Right - $r*2, $rect.Bottom - $r*2, $r*2, $r*2, 0, 90)
+    $path.AddArc($rect.X, $rect.Bottom - $r*2, $r*2, $r*2, 90, 90)
+    $path.CloseFigure()
+    $g.FillPath($brush, $path)
+    $brush.Dispose()
+    $path.Dispose()
+})
+
+$vScroll.Add_MouseEnter({ $thumb.Hover = $true; $vScroll.Invalidate() })
+$vScroll.Add_MouseLeave({ if (-not $thumb.Dragging) { $thumb.Hover = $false; $vScroll.Invalidate() } })
+
+$vScroll.Add_MouseDown({
+    if ($_.Y -ge $thumb.Pos -and $_.Y -le ($thumb.Pos + $thumb.Size)) {
+        $thumb.Dragging  = $true
+        $thumb.DragStartY = $_.Y
+        $thumb.DragStartPos = $thumb.Pos
+    } else {
+        # Click outside thumb -> jump
+        $thumb.Pos = [Math]::Max(0, $_.Y - [int]($thumb.Size / 2))
+        Apply-ScrollFromThumb
+    }
+})
+
+$vScroll.Add_MouseMove({
+    if ($thumb.Dragging) {
+        $delta = $_.Y - $thumb.DragStartY
+        $newPos = $thumb.DragStartPos + $delta
+        $maxPos = $vScroll.ClientSize.Height - $thumb.Size
+        if ($newPos -lt 0) { $newPos = 0 }
+        if ($newPos -gt $maxPos) { $newPos = $maxPos }
+        $thumb.Pos = $newPos
+        Apply-ScrollFromThumb
+    }
+})
+
+$vScroll.Add_MouseUp({ $thumb.Dragging = $false; $vScroll.Invalidate() })
+
+function Apply-ScrollFromThumb {
+    $maxPos = [Math]::Max(1, $vScroll.ClientSize.Height - $thumb.Size)
+    $ratio  = $thumb.Pos / $maxPos
+    $totalLines = [Math]::Max(1, $output.Lines.Count)
+    $visibleLines = [Math]::Max(1, [int]($output.ClientSize.Height / $output.Font.Height))
+    $maxFirst = [Math]::Max(1, $totalLines - $visibleLines)
+    $targetLine = [int]($maxFirst * $ratio)
+    if ($targetLine -lt 0) { $targetLine = 0 }
+    if ($targetLine -ge $totalLines) { $targetLine = $totalLines - 1 }
+    $charIdx = $output.GetFirstCharIndexFromLine($targetLine)
+    if ($charIdx -ge 0) {
+        $output.SelectionStart = $charIdx
+        $output.ScrollToCaret()
+    }
+    $vScroll.Invalidate()
+}
+
+# Hide the native vertical scrollbar by overlaying ours on top of it.
+# (Native still works with mouse wheel; ours just visually replaces it.)
+
+# Update thumb on text/resize/scroll
+$output.Add_TextChanged({ Update-ScrollThumb })
+$output.Add_VScroll({ Update-ScrollThumb })
+$output.Add_Resize({ Update-ScrollThumb })
+$output.Add_MouseWheel({ Update-ScrollThumb })
+$card.Add_Resize({ Update-ScrollThumb })
+
+# ---------- Status strip ----------
 $statusBar           = New-Object System.Windows.Forms.Panel
 $statusBar.Dock      = "Bottom"
 $statusBar.Height    = 26
@@ -218,14 +383,70 @@ $statusText.Location  = New-Object System.Drawing.Point(28, 6)
 $statusText.AutoSize  = $true
 $statusBar.Controls.Add($statusText)
 
+# ---------- Pulse animation for status dot ----------
+$pulse = @{
+    active = $false
+    phase  = 0.0
+    base   = $theme.Accent
+}
+$pulseTimer = New-Object System.Windows.Forms.Timer
+$pulseTimer.Interval = 40
+$pulseTimer.Add_Tick({
+    if (-not $pulse.active) { return }
+    $pulse.phase += 0.18
+    $t = (([Math]::Sin($pulse.phase) + 1) / 2)  # 0..1
+    $statusDot.ForeColor = Lerp-Color $theme.Sidebar $pulse.base $t
+})
+$pulseTimer.Start()
+
+function Start-Pulse([System.Drawing.Color]$color) {
+    $pulse.active = $true
+    $pulse.base   = $color
+}
+function Stop-Pulse([System.Drawing.Color]$finalColor) {
+    $pulse.active = $false
+    $statusDot.ForeColor = $finalColor
+}
+
+# ---------- Output fade animation ----------
+$fade = @{
+    timer = $null
+    step  = 0
+    text  = ""
+}
+$fadeTimer = New-Object System.Windows.Forms.Timer
+$fadeTimer.Interval = 25
+$fadeTimer.Add_Tick({
+    $fade.step += 1
+    $t = $fade.step / 8.0
+    if ($t -ge 1) {
+        $output.ForeColor = $theme.Text
+        $fadeTimer.Stop()
+        return
+    }
+    $output.ForeColor = Lerp-Color $theme.PanelDeep $theme.Text $t
+})
+
+function Write-Out([string]$text) {
+    $output.Text = $text
+    $output.SelectionStart  = 0
+    $output.SelectionLength = 0
+    $output.ScrollToCaret()
+    Update-ScrollThumb
+    # Fade text from background to foreground
+    $fade.step = 0
+    $output.ForeColor = $theme.PanelDeep
+    $fadeTimer.Start()
+}
+
 # ---------- Helpers ----------
 function Set-Status([string]$text, [string]$state = "ok") {
     $statusText.Text = $text
     switch ($state) {
-        "ok"   { $statusDot.ForeColor = $theme.Ok }
-        "warn" { $statusDot.ForeColor = $theme.Warn }
-        "err"  { $statusDot.ForeColor = $theme.Err }
-        "busy" { $statusDot.ForeColor = $theme.Accent }
+        "ok"   { Stop-Pulse $theme.Ok }
+        "warn" { Stop-Pulse $theme.Warn }
+        "err"  { Stop-Pulse $theme.Err }
+        "busy" { Start-Pulse $theme.Accent }
     }
     [System.Windows.Forms.Application]::DoEvents()
 }
@@ -233,13 +454,6 @@ function Set-Status([string]$text, [string]$state = "ok") {
 function Set-Page([string]$title, [string]$hint) {
     $pageTitle.Text = $title
     $pageHint.Text  = $hint
-}
-
-function Write-Out([string]$text) {
-    $output.Text = $text
-    $output.SelectionStart  = 0
-    $output.SelectionLength = 0
-    $output.ScrollToCaret()
 }
 
 function Run-Cmd([string]$cmd, [string]$pageTitleText) {
@@ -262,29 +476,62 @@ function Ask-Input([string]$prompt, [string]$default = "") {
     return [Microsoft.VisualBasic.Interaction]::InputBox($prompt, "Multi-Tool", $default)
 }
 
-# ---------- Sidebar buttons ----------
+# ---------- Animated sidebar buttons ----------
 function Add-ToolButton([string]$label, [scriptblock]$action) {
     $b           = New-Object System.Windows.Forms.Button
     $b.Text      = "  " + $label
     $b.Location  = New-Object System.Drawing.Point(12, $script:sidebarY)
     $b.Size      = New-Object System.Drawing.Size(216, 32)
     $b.FlatStyle = "Flat"
-    $b.BackColor = $theme.Sidebar
+    $b.BackColor = $theme.BtnIdle
     $b.ForeColor = $theme.Text
     $b.Font      = $fontUI
     $b.TextAlign = "MiddleLeft"
     $b.Cursor    = "Hand"
     $b.TabStop   = $false
     $b.FlatAppearance.BorderSize         = 0
-    $b.FlatAppearance.MouseOverBackColor = $theme.BtnHover
+    $b.FlatAppearance.MouseOverBackColor = $theme.BtnIdle  # we override
     $b.FlatAppearance.MouseDownBackColor = $theme.BtnActive
+
+    # Animation state
+    $b.Tag = @{
+        target  = 0.0
+        current = 0.0
+        from    = $theme.BtnIdle
+        to      = $theme.BtnHover
+    }
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 16
+    $btnRef = $b
+    $timer.Add_Tick({
+        $s = $btnRef.Tag
+        $diff = $s.target - $s.current
+        if ([Math]::Abs($diff) -lt 0.02) {
+            $s.current = $s.target
+            $timer.Stop()
+        } else {
+            $s.current += $diff * 0.22
+        }
+        $btnRef.BackColor = Lerp-Color $s.from $s.to $s.current
+    }.GetNewClosure())
+
+    $b.Add_MouseEnter({
+        $this.Tag.target = 1.0
+        $timer.Start()
+    }.GetNewClosure())
+    $b.Add_MouseLeave({
+        $this.Tag.target = 0.0
+        $timer.Start()
+    }.GetNewClosure())
     $b.Add_Click($action)
-    $sidebar.Controls.Add($b)
+
+    $sidebarInner.Controls.Add($b)
     $script:sidebarY += 34
     return $b
 }
 
-# ---------- SYSTEM section ----------
+# ---------- Sections ----------
 Add-Section "System"
 Add-ToolButton "System Info"        { Run-Cmd "systeminfo" "System Info" }
 Add-ToolButton "Running Processes"  { Run-Cmd "tasklist" "Running Processes" }
@@ -295,7 +542,6 @@ Add-ToolButton "Kill Process..."    {
 Add-ToolButton "Drives / Disks"     { Run-Cmd "wmic logicaldisk get deviceid,volumename,size,freespace" "Drives" }
 Add-ToolButton "Installed Hotfixes" { Run-Cmd "wmic qfe list brief" "Hotfixes" }
 
-# ---------- NETWORK section ----------
 Add-Section "Network"
 Add-ToolButton "ipconfig /all"      { Run-Cmd "ipconfig /all" "Network Configuration" }
 Add-ToolButton "Ping..."            {
@@ -346,7 +592,6 @@ Add-ToolButton "Wi-Fi Passwords"    {
     Set-Status "Done" "ok"
 }
 
-# ---------- FILES section ----------
 Add-Section "Files"
 Add-ToolButton "Search File..."     {
     $name = Ask-Input "Filename or pattern (e.g. *.txt):"
@@ -382,7 +627,6 @@ Add-ToolButton "Backup -> Zip..."   {
     }
 }
 
-# ---------- UTILS section ----------
 Add-Section "Utilities"
 Add-ToolButton "Random Password"    {
     $lenStr = Ask-Input "Password length:" "16"
@@ -398,8 +642,24 @@ Add-ToolButton "Clear Output"       {
     $output.Text = ""
     Set-Page "Welcome" "Pick a tool from the sidebar."
     Set-Status "Cleared" "ok"
+    Update-ScrollThumb
 }
 Add-ToolButton "Exit"               { $form.Close() }
+
+# ---------- Window fade-in on show ----------
+$fadeIn = New-Object System.Windows.Forms.Timer
+$fadeIn.Interval = 16
+$fadeIn.Add_Tick({
+    if ($form.Opacity -lt 1.0) {
+        $form.Opacity = [Math]::Min(1.0, $form.Opacity + 0.08)
+    } else {
+        $fadeIn.Stop()
+    }
+})
+$form.Add_Shown({
+    Update-ScrollThumb
+    $fadeIn.Start()
+})
 
 # ---------- Show ----------
 [void]$form.ShowDialog()
